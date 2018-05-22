@@ -1,0 +1,164 @@
+---
+title: "GatesOR"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "Gates Open Research"
+subtitle: "Submissions from Nov 2017 to Febr 2018"
+author: "Birgit Schmidt"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+#output: html_document
+output:
+  html_document:
+    df_print: paged
+    keep_md: yes
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r load libraries, echo = FALSE, cache = TRUE, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rcrossref)
+library(lubridate)
+library(gender)
+library(europepmc)
+library(rvest) # for web scraping
+library(stringr) # string manipulation
+```
+
+## Introduction
+We investigate the publication metadata and related events on the Gates Open Research (GOR) publication platform as of 1 March 2018. The platform was launched in November 2017. 
+
+Days from submission to publication and to indexing: the numbers are skewed because it includes submissions that were on hold for several weeks before the November launch.
+
+```{r load data, echo = FALSE, cache = FALSE, warning = FALSE, message = FALSE}
+#GatesOR <- read.csv("/Users/bschmidt/Dropbox/data/GatesOR/GORdata_2018.csv", header = TRUE, sep = ";")
+GatesOR <- read.csv("https://zenodo.org/record/1249420/files/GOR_data_20180301.csv", header = TRUE, sep = ";")
+
+# change variable name (to harmonize with WellcomeOR dataset)
+GatesOR_new <- rename(GatesOR, Submission.date = Submitted)
+
+# change date formatting, one variable 
+#GatesOR_new <- GatesOR_new %>% mutate(Submission.date = as.Date(Submission.date, "%d.%m.%y"))
+#GatesOR_new <- GatesOR_new %>% mutate(Submission.date = lubridate::dmy(Submission.date))
+
+# change date formatting for all relevant variables
+datevars <- c("Submission.date", "Prepub.Checks.With.Authors", "Author.Revisions.Received",  "Sent.To.Typesetters", "Pdf.Proofs.To.Authors",      "Published", "Referee.Report.1", "Referee.Report.2", "Referee.Report.3",    "Referee.Report.4", "Indexed")
+
+GatesOR_new <- GatesOR_new %>% mutate_at(vars(one_of(datevars)), funs(lubridate::parse_date_time(., "dmy")))
+#write_csv(GatesOR_new, "/Users/bschmidt/Dropbox/data/GatesOR/GatesOR_new.csv")
+
+```
+
+
+# Submissions 
+
+```{r submissions, echo = FALSE, cache = FALSE, warning = FALSE, message = FALSE}
+
+# summarize by month
+#monthly <- GatesOR_new %>% mutate(date = as.Date(Submission.date, "%d.%m.%y"), month = month(date), year = year(date)) %>% group_by(year, month) %>% summarize(n = n()) %>% arrange(year, month) %>% mutate(m = make_datetime(year, month))
+monthly <- GatesOR_new %>% mutate(date = Submission.date, month = month(date), year = year(date)) %>% group_by(year, month) %>% summarize(n = n()) %>% arrange(year, month) %>% mutate(m = make_datetime(year, month))
+
+ggplot(monthly, aes(m, n)) + labs(title = "Submissions by month (17 Oct 2016 - 17 Nov 2017)", x = "Month", y = "Number of submissions") + geom_line()
+ggsave("WOR_subm_by_month.pdf")
+
+# article versions
+GatesOR_new %>% group_by(Version.Number) %>% summarize(n = n())
+# article types
+GatesOR_new %>% group_by(Article.Type) %>% summarize(n = n()) %>% arrange(desc(n))
+
+# versions of articles 
+tver <- table(GatesOR_new$Version.Number)
+
+# article types - table based on version 1 only
+art_types <- GatesOR_new %>% filter(Version.Number == 1) %>% group_by(Article.Type) %>% summarize(n = n(), perc = round(n / 28 * 100, 2)) %>% arrange(desc(n))
+art_types
+art_types <- as.data.frame(art_types)
+
+```
+
+# Time from submission to first review 
+```{r duration, cache = FALSE, echo = FALSE, warning = FALSE, message = FALSE}
+# introduce new variables recording the duration from submission to first review etc.
+
+GatesOR_pp <- GatesOR_new %>% filter(Version.Number == 1) %>% select(Article.Type, Submission.date, Published, Referee.Report.1:Referee.Report.4, Author.Revisions.Received, Indexed) %>% mutate(sub_to_pub = Published - Submission.date, sub_to_frev = Referee.Report.1 - Submission.date, sub_to_srev = Referee.Report.2 - Submission.date, sub_to_arev = Author.Revisions.Received - Submission.date, sub_to_ind = Indexed - Submission.date)
+
+# duration across all article types
+GatesOR_pp %>%  summarize(n = n(), msubpub = round(median(sub_to_pub, na.rm = TRUE), 2), msubfrev = round(median(sub_to_frev, na.rm = TRUE), 2), msubsrev = round(median(sub_to_srev, na.rm = TRUE), 2), msubarev =  round(median(sub_to_arev, na.rm = TRUE), 2), msubind = round(median(sub_to_ind, na.rm = TRUE), 2)) %>% arrange(desc(n)) 
+# leaving out those which are not published yet!!
+GatesOR_pp %>% filter(!is.na(Published)) %>% summarize(n = n(), msubpub = round(median(sub_to_pub, na.rm = TRUE), 2), msubfrev = round(median(sub_to_frev, na.rm = TRUE), 2), msubsrev = round(median(sub_to_srev, na.rm = TRUE), 2), msubarev =  round(median(sub_to_arev, na.rm = TRUE), 2), msubind = round(median(sub_to_ind, na.rm = TRUE), 2)) %>% arrange(desc(n)) 
+
+
+# summarize duration by article type - including those which are not published yet
+GatesOR_pp %>% group_by(Article.Type) %>% summarize(n = n(), msubpub = round(median(sub_to_pub, na.rm = TRUE), 2), msubfrev = round(median(sub_to_frev, na.rm = TRUE), 2), msubsrev = round(median(sub_to_srev, na.rm = TRUE), 2), msubarev =  round(median(sub_to_arev, na.rm = TRUE), 2), msubind = round(median(sub_to_ind, na.rm = TRUE), 2)) %>% arrange(desc(n)) 
+
+```
+
+```{r amend data, echo = FALSE, warning = FALSE, message = FALSE}
+##  amend the data by external datasets
+# retrieve CrossRef dataset
+gates_df <- rcrossref::cr_works(filter = c(issn = "2572-4754"), limit = 1000) %>% .$data
+
+### from Github ###
+#' prepare unnest
+names(gates_df$link) <- gates_df$DOI
+#' unnest, remove unneded string, and export data
+gates_dois <- dplyr::bind_rows(gates_df$link, .id = "doi") %>% 
+  mutate(URL = gsub("/iparadigms", "", URL)) %>% 
+  select(1:2)
+readr::write_csv(gates_dois, "~/Downloads/gates_doi.csv")
+
+#' Fetch Crossref Event Data per DOI 
+# https://github.com/ropenscilabs/crevents
+# devtools::install_github("ropenscilabs/crevents")
+#library(crevents)
+#my_cr <- purrr::map(gates_dois$doi, purrr::safely(function(x) {  crevents::cred_query(filter = list(obj_id = x))$message$events}))
+#cr_events <- map_df(my_cr, "result")
+#' export
+#readr::write_csv(cr_events, "~/Downloads/gates_event.csv")
+
+#' from Altmetrics
+library(rAltmetric)
+alt_gates <- purrr::map(gates_dois$doi, purrr::safely(function(x) {
+  rAltmetric::altmetrics(doi = x) %>%
+  rAltmetric::altmetric_data()
+}))
+tt <- purrr::map_df(alt_gates, "result")
+write_csv(tt, "~/Downloads/gates_altmetrics.csv")
+
+###
+# rename URL variable
+GatesOR_new <- rename(GatesOR_new, URL = Version.Url)
+# add dois
+GatesOR_tt <- GatesOR_new %>% left_join(gates_dois)
+
+# reference dataset: amend WOR dataset, join with the CrossRef dataset 
+GatesOR_new <- GatesOR_tt %>% left_join(gates_df, by = c("doi" = "DOI"))
+
+# rename variable to match the names of WOR dataset
+GatesOR_new <- rename(GatesOR_new, URL = URL.x)
+
+```
+We study in more detail the `r nrow(GatesOR)` publications for which additional information was made available by the Gates Foundation. As of 1 March 2018 there were `r tver[1]` publications with version one, and `r tver[2]` publications with version two available. However, information on version one was missing for three publications in the dataset. In addition, a subset of `r GatesOR_new %>% filter(is.na(Published)) %>% nrow(.)` articles were not yet published on the platform yet. 
+
+A DOI was available for a subset of `r sum(!is.na(GatesOR_new$doi))` records. Since then the number of publications has nearly doubled: according to Crossref there were `r nrow(gates_dois)` articles with registered DOIs on the Gates Open Research platform as of `r format(Sys.time(), '%d %B %Y')`. 
+
+Regarding submitted article types about 3/5 were research articles, followed by about 1/5 study protocols and data notes, open letters, method articles and systematic reviews ranging between 4 and 7 percent. 
+
+The time from submission to publication across all publication types was about 19 days (median), ranging from 10 days for method articles and 52 days for data notes. The first review typically arrived after 31.5 days, again taking shortest for method articles (21 days) and longest for data notes (65 days). The second review was available after another 9 days. Publications were indexed after about 41 days. Overall, these durations were slightly shorter than for submissions to the Wellcome Open Research platform. However, it must be noted that the dataset only records the first four months of operation of the platform, and are thus only indicative. 
+
+## References
+
+* Jahn, N., Salmon, M. (2017). europepmc: R Interface to the Europe PubMed Central RESTful Web Service. R package version 0.2. https://cran.r-project.org/web/packages/europepmc/index.html 
+
+* Jahn, N. (2017a). Introducing europepmc, an R interface to Europe PMC RESTful API. Version of 11 December 2017. Available at: https://ropensci.github.io/europepmc/articles/introducing-europepmc.html
+
+* Jahn, N. (2017b). R script for retrieving DOIs, event and altmetrics. Available at:  https://gist.github.com/njahn82/a6ce300b00de5e218bbf3efb4e0a5e36
